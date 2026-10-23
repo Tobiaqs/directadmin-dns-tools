@@ -8,6 +8,7 @@ DirectAdmin hosting account through its API:
 
 The main use is getting Let's Encrypt certificates (including wildcards) with
 certbot's DNS-01 challenge for domains whose DNS is hosted on DirectAdmin.
+For Caddy, see [Using with Caddy](#using-with-caddy).
 
 ## Setup
 
@@ -129,6 +130,83 @@ sudo certbot renew --dry-run
 Certbot runs as root: make sure root can read `credentials.txt` and
 `dns_token.txt`, and keep both at mode 600. Alternatively, pass the key via the
 `DA_KEY` environment variable, or point to other files with `-c` / `-k`.
+
+## Using with Caddy
+
+Caddy does not use the scripts in this repository: it has its own DirectAdmin
+DNS module, [caddy-dns/directadmin](https://github.com/caddy-dns/directadmin),
+which talks to the DirectAdmin API directly. `da_login_keys.py` is still
+handy for creating its Login Key.
+
+### 1. Create a Login Key for Caddy
+
+The module needs `CMD_API_SHOW_DOMAINS` in addition to `CMD_API_DNS_CONTROL`:
+
+```sh
+./da_login_keys.py create caddy \
+  --cmd CMD_API_DNS_CONTROL --cmd CMD_API_SHOW_DOMAINS \
+  -o caddy_token.txt
+./da_login_keys.py test caddy_token.txt --domain example.com
+```
+
+### 2. Build Caddy with the DirectAdmin module
+
+The standard Caddy binary does not include DNS providers. Build one with
+[xcaddy](https://github.com/caddyserver/xcaddy):
+
+```sh
+xcaddy build --with github.com/caddy-dns/directadmin
+```
+
+or add the module to an existing installation with
+`caddy add-package github.com/caddy-dns/directadmin`, or download a custom
+build from <https://caddyserver.com/download>. Check with
+`caddy list-modules | grep directadmin`.
+
+### 3. Configure the Caddyfile
+
+Use the DNS challenge for every certificate (global option):
+
+```
+{
+	acme_dns directadmin {
+		host https://da.example-host.com:2222
+		user your-da-username
+		login_key {$DA_LOGIN_KEY}
+	}
+}
+
+example.com, *.example.com {
+	reverse_proxy localhost:8080
+}
+```
+
+or only for specific sites:
+
+```
+*.example.com {
+	tls {
+		dns directadmin {
+			host https://da.example-host.com:2222
+			user your-da-username
+			login_key {$DA_LOGIN_KEY}
+		}
+	}
+	reverse_proxy localhost:8080
+}
+```
+
+`{$DA_LOGIN_KEY}` is read from the environment when Caddy loads the config, so
+the key stays out of the Caddyfile. With the systemd service, put it in an
+override (`systemctl edit caddy`):
+
+```
+[Service]
+Environment=DA_LOGIN_KEY=the-key-from-caddy_token.txt
+```
+
+The module also has an `insecure_requests` option (`"true"`/`"false"`) for
+DirectAdmin servers with a self-signed certificate.
 
 ## `da_dns.py` reference
 
